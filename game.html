@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pong Game - AI Can Miss!</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column; /* Stack elements vertically */
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #2c3e50; /* Dark blue background */
+            font-family: 'Press Start 2P', cursive; /* Arcade font */
+            color: #ecf0f1; /* Light text color */
+            overflow: hidden; /* Prevent scrollbars if elements slightly overflow */
+        }
+
+        #gameContainer {
+            position: relative; /* Needed for absolute positioning of overlays */
+            border: 5px solid #ecf0f1; /* White border */
+            box-shadow: 0 0 20px rgba(236, 240, 241, 0.5); /* Glow effect */
+        }
+
+        canvas {
+            display: block; /* Removes potential extra space below canvas */
+            background-color: #16a085; /* Tennis court green */
+        }
+
+        #scoreboard {
+            font-size: 24px;
+            margin-bottom: 15px; /* Space between score and canvas */
+            text-align: center;
+        }
+
+        #controls {
+            margin-bottom: 15px; /* Space between controls and score */
+            text-align: center;
+        }
+
+        button {
+            font-family: 'Press Start 2P', cursive;
+            font-size: 14px;
+            padding: 10px 20px;
+            margin: 0 10px;
+            cursor: pointer;
+            background-color: #e74c3c; /* Red buttons */
+            color: #ecf0f1;
+            border: 2px solid #c0392b; /* Darker red border */
+            border-radius: 5px; /* Slightly rounded corners */
+            transition: background-color 0.2s, transform 0.1s;
+            box-shadow: 0 4px #c0392b; /* Button shadow */
+        }
+
+        button:hover {
+            background-color: #c0392b; /* Darker red on hover */
+        }
+
+        button:active {
+            transform: translateY(2px); /* Push button down on click */
+            box-shadow: 0 2px #c0392b;
+        }
+
+        button.active {
+             background-color: #27ae60; /* Green for active level */
+             border: 2px solid #2ecc71;
+             box-shadow: 0 4px #27ae60;
+        }
+
+        /* Base overlay style */
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none; /* Hidden by default */
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background-color: rgba(44, 62, 80, 0.85); /* Semi-transparent overlay */
+            color: #f1c40f; /* Yellow text */
+        }
+
+        #messageOverlay {
+             /* Inherits from .overlay */
+            font-size: 30px;
+        }
+         #messageOverlay p {
+             margin-bottom: 20px;
+         }
+         #messageOverlay button {
+             font-size: 18px;
+             background-color: #3498db; /* Blue button */
+             border: 2px solid #2980b9;
+             box-shadow: 0 4px #2980b9;
+         }
+         #messageOverlay button:hover {
+             background-color: #2980b9;
+         }
+          #messageOverlay button:active {
+             transform: translateY(2px);
+             box-shadow: 0 2px #2980b9;
+         }
+
+         /* Point Announcement Style */
+         #pointMessage {
+             background-color: transparent;
+             font-size: 36px;
+             color: #ffffff;
+             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+             pointer-events: none;
+             /* Inherits display: none, position, layout from .overlay */
+         }
+
+
+         .trophy {
+             font-size: 60px;
+             margin-bottom: 15px;
+         }
+
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <button id="easyBtn">Easy</button>
+        <button id="hardBtn">Hard</button>
+    </div>
+
+    <div id="scoreboard">
+        Player: <span id="playerScore">0</span> | AI: <span id="aiScore">0</span>
+    </div>
+
+    <div id="gameContainer">
+        <canvas id="pongCanvas" width="800" height="500"></canvas>
+
+        <div id="messageOverlay" class="overlay">
+            <p id="winLoseMessage"></p>
+            <div id="trophyDisplay" class="trophy" style="display: none;">🏆</div>
+            <button id="playAgainBtn">Play Again?</button>
+        </div>
+
+        <div id="pointMessage" class="overlay">
+             </div>
+    </div>
+
+    <script>
+        // --- Canvas Setup ---
+        const canvas = document.getElementById('pongCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- Game Elements & Constants ---
+        const WINNING_SCORE = 3;
+        const PADDLE_HEIGHT = 100;
+        const PADDLE_WIDTH = 15;
+        const BALL_RADIUS = 10;
+        const PLAYER_PADDLE_X = 10;
+        const AI_PADDLE_X = canvas.width - PADDLE_WIDTH - 10;
+        const COURT_LINE_WIDTH = 5;
+        const COURT_CENTER_X = canvas.width / 2;
+        const COURT_CENTER_Y = canvas.height / 2;
+        const OBSTACLE_WIDTH = 20;
+        const OBSTACLE_HEIGHT = 80;
+        const OBSTACLE_COLOR = '#e74c3c';
+        // ** NEW: AI Miss Chance Constants (Lower value = lower chance) **
+        const AI_MISS_CHANCE_EASY = 0.02; // 2% chance per frame on Easy
+        const AI_MISS_CHANCE_HARD = 0.005; // 0.5% chance per frame on Hard
+        const AI_MISS_SPEED_MULTIPLIER = 0.1; // How much speed is reduced when AI "misses"
+
+        // --- Game State Variables ---
+        let playerScore = 0;
+        let aiScore = 0;
+        let gameRunning = false;
+        let difficulty = 'easy';
+        let baseBallSpeedX = 10;
+        let baseBallSpeedY = 10;
+        let baseAiSpeed = 7;
+        let maxBallSpeedEasy = 20;
+        let maxBallSpeedHard = 26;
+        let pointMessageTimeout = null;
+
+
+        // --- Game Objects ---
+        const playerPaddle = { x: PLAYER_PADDLE_X, y: canvas.height / 2 - PADDLE_HEIGHT / 2, width: PADDLE_WIDTH, height: PADDLE_HEIGHT, color: '#ecf0f1' };
+        const aiPaddle = { x: AI_PADDLE_X, y: canvas.height / 2 - PADDLE_HEIGHT / 2, width: PADDLE_WIDTH, height: PADDLE_HEIGHT, color: '#ecf0f1', speed: baseAiSpeed };
+        const ball = { x: COURT_CENTER_X, y: COURT_CENTER_Y, radius: BALL_RADIUS, speedX: baseBallSpeedX, speedY: baseBallSpeedY, color: '#f1c40f' };
+        const obstacles = [
+            { x: COURT_CENTER_X - OBSTACLE_WIDTH / 2, y: canvas.height * 0.25 - OBSTACLE_HEIGHT / 2, width: OBSTACLE_WIDTH, height: OBSTACLE_HEIGHT, color: OBSTACLE_COLOR },
+            { x: COURT_CENTER_X - OBSTACLE_WIDTH / 2, y: canvas.height * 0.75 - OBSTACLE_HEIGHT / 2, width: OBSTACLE_WIDTH, height: OBSTACLE_HEIGHT, color: OBSTACLE_COLOR }
+        ];
+
+
+        // --- DOM Elements ---
+        const playerScoreDisplay = document.getElementById('playerScore');
+        const aiScoreDisplay = document.getElementById('aiScore');
+        const messageOverlay = document.getElementById('messageOverlay');
+        const winLoseMessage = document.getElementById('winLoseMessage');
+        const trophyDisplay = document.getElementById('trophyDisplay');
+        const playAgainBtn = document.getElementById('playAgainBtn');
+        const easyBtn = document.getElementById('easyBtn');
+        const hardBtn = document.getElementById('hardBtn');
+        const pointMessage = document.getElementById('pointMessage');
+
+        // --- Drawing Functions ---
+        function drawRect(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); }
+        function drawCircle(x, y, r, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2, false); ctx.closePath(); ctx.fill(); }
+        function drawNet() { for (let i = 0; i <= canvas.height; i += 25) { drawRect(COURT_CENTER_X - COURT_LINE_WIDTH / 2, i, COURT_LINE_WIDTH, 15, '#ecf0f1'); } }
+        function drawObstacles() { obstacles.forEach(obstacle => { drawRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height, obstacle.color); }); }
+
+        function drawGame() {
+            drawRect(0, 0, canvas.width, canvas.height, '#16a085'); // Background
+            drawNet();
+            drawObstacles();
+            drawRect(playerPaddle.x, playerPaddle.y, playerPaddle.width, playerPaddle.height, playerPaddle.color); // Player Paddle
+            drawRect(aiPaddle.x, aiPaddle.y, aiPaddle.width, aiPaddle.height, aiPaddle.color); // AI Paddle
+            drawCircle(ball.x, ball.y, ball.radius, ball.color); // Ball
+        }
+
+        // --- Movement & Logic ---
+
+        function showPointMessage(message) {
+            pointMessage.textContent = message;
+            pointMessage.style.display = 'flex';
+            if (pointMessageTimeout) { clearTimeout(pointMessageTimeout); }
+            pointMessageTimeout = setTimeout(() => {
+                pointMessage.style.display = 'none';
+                pointMessageTimeout = null;
+            }, 1200);
+        }
+
+
+        function resetBall() {
+            ball.x = COURT_CENTER_X;
+            ball.y = COURT_CENTER_Y;
+            const currentBaseSpeed = (difficulty === 'hard' ? baseBallSpeedX * 1.5 : baseBallSpeedX);
+            ball.speedX = (Math.random() > 0.5 ? 1 : -1) * currentBaseSpeed * 0.7;
+            ball.speedY = (Math.random() * 2 - 1) * currentBaseSpeed * 0.7;
+            if (Math.abs(ball.speedX) < currentBaseSpeed * 0.5) {
+                ball.speedX = (ball.speedX > 0 ? 1 : -1) * currentBaseSpeed * 0.5;
+            }
+        }
+
+
+        function moveBall() {
+            ball.x += ball.speedX;
+            ball.y += ball.speedY;
+
+            // Wall collision (Top/Bottom)
+            if (ball.y + ball.radius > canvas.height || ball.y - ball.radius < 0) {
+                ball.speedY = -ball.speedY;
+                if (ball.y + ball.radius > canvas.height) ball.y = canvas.height - ball.radius;
+                if (ball.y - ball.radius < 0) ball.y = ball.radius;
+            }
+
+            // Obstacle collision
+            obstacles.forEach(obstacle => {
+                if (detectRectCollision(ball, obstacle)) {
+                    let overlapX = (ball.radius + obstacle.width / 2) - Math.abs(ball.x - (obstacle.x + obstacle.width / 2));
+                    let overlapY = (ball.radius + obstacle.height / 2) - Math.abs(ball.y - (obstacle.y + obstacle.height / 2));
+                    if (overlapX > overlapY) { ball.speedY = -ball.speedY; ball.y += ball.speedY > 0 ? overlapY : -overlapY; }
+                    else { ball.speedX = -ball.speedX; ball.x += ball.speedX > 0 ? overlapX : -overlapX; }
+                }
+            });
+
+            // Paddle collision
+            let paddle = (ball.x < canvas.width / 2) ? playerPaddle : aiPaddle;
+            if (detectCollision(ball, paddle)) {
+                let collidePoint = (ball.y - (paddle.y + paddle.height / 2)) / (paddle.height / 2);
+                let angleRad = collidePoint * (Math.PI / 4);
+                let direction = (ball.x < canvas.width / 2) ? 1 : -1;
+                let currentSpeed = Math.sqrt(ball.speedX**2 + ball.speedY**2);
+                let maxSpeed = (difficulty === 'hard' ? maxBallSpeedHard : maxBallSpeedEasy);
+                currentSpeed = Math.min(currentSpeed * 1.07, maxSpeed);
+                ball.speedX = direction * currentSpeed * Math.cos(angleRad);
+                ball.speedY = currentSpeed * Math.sin(angleRad);
+                ball.x += ball.speedX > 0 ? 3 : -3;
+            } else {
+                // Scoring
+                if (ball.x - ball.radius < 0) { // AI scores
+                    aiScore++;
+                    showPointMessage("AI Scores!");
+                    resetBall();
+                } else if (ball.x + ball.radius > canvas.width) { // Player scores
+                    playerScore++;
+                    showPointMessage("Player Scores!");
+                    resetBall();
+                }
+            }
+
+            playerScoreDisplay.textContent = playerScore;
+            aiScoreDisplay.textContent = aiScore;
+        }
+
+        // Collision: Ball vs Paddle
+        function detectCollision(b, p) { /* ... (no changes) ... */
+            let ballTop = b.y - b.radius; let ballBottom = b.y + b.radius;
+            let ballLeft = b.x - b.radius; let ballRight = b.x + b.radius;
+            let paddleTop = p.y; let paddleBottom = p.y + p.height;
+            let paddleLeft = p.x; let paddleRight = p.x + p.width;
+            return ballRight > paddleLeft && ballLeft < paddleRight && ballBottom > paddleTop && ballTop < paddleBottom;
+         }
+
+        // Collision: Ball vs Obstacle Rect
+        function detectRectCollision(circle, rect) { /* ... (no changes) ... */
+            let closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+            let closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+            let distanceX = circle.x - closestX; let distanceY = circle.y - closestY;
+            let distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+            return distanceSquared < (circle.radius * circle.radius);
+         }
+
+        // ** MODIFIED: AI Paddle Movement with Miss Chance **
+        function moveAiPaddle() {
+            let aiPaddleCenter = aiPaddle.y + aiPaddle.height / 2;
+            let targetY = ball.y + (ball.speedY * 0.12); // Simple prediction
+            let trackingOffset = (difficulty === 'easy' ? 50 : 30);
+
+            // Determine the AI's effective speed for this frame
+            let currentFrameAiSpeed = aiPaddle.speed; // Start with normal speed
+
+            // Determine miss chance based on difficulty
+            let missChance = (difficulty === 'easy') ? AI_MISS_CHANCE_EASY : AI_MISS_CHANCE_HARD;
+
+            // Randomly check if the AI should "miss" (reduce speed) this frame
+            if (Math.random() < missChance) {
+                currentFrameAiSpeed *= AI_MISS_SPEED_MULTIPLIER; // Significantly reduce speed
+            }
+
+            // Move the paddle using the potentially reduced speed
+            if (aiPaddleCenter < targetY - trackingOffset) {
+                aiPaddle.y += currentFrameAiSpeed; // Use current frame's speed
+            } else if (aiPaddleCenter > targetY + trackingOffset) {
+                aiPaddle.y -= currentFrameAiSpeed; // Use current frame's speed
+            }
+
+            // Keep AI paddle within bounds
+            if (aiPaddle.y < 0) aiPaddle.y = 0;
+            if (aiPaddle.y + aiPaddle.height > canvas.height) aiPaddle.y = canvas.height - aiPaddle.height;
+        }
+
+        // Player Paddle Movement
+        function movePlayerPaddle(event) { /* ... (no changes) ... */
+            let rect = canvas.getBoundingClientRect();
+            playerPaddle.y = event.clientY - rect.top - playerPaddle.height / 2;
+            if (playerPaddle.y < 0) playerPaddle.y = 0;
+            if (playerPaddle.y + playerPaddle.height > canvas.height) playerPaddle.y = canvas.height - playerPaddle.height;
+        }
+
+        // --- Game Loop ---
+        function update() {
+            if (!gameRunning) return;
+            moveBall();
+            moveAiPaddle(); // AI movement now includes miss chance
+            drawGame();
+
+            if (playerScore >= WINNING_SCORE || aiScore >= WINNING_SCORE) {
+                endGame();
+            } else {
+                requestAnimationFrame(update);
+            }
+        }
+
+        // --- Game Management ---
+
+        function setDifficulty(level) {
+            difficulty = level;
+            if (level === 'easy') {
+                aiPaddle.speed = baseAiSpeed; // Base speed for easy
+                easyBtn.classList.add('active');
+                hardBtn.classList.remove('active');
+            } else { // Hard
+                aiPaddle.speed = baseAiSpeed * 1.6; // Faster base speed for hard
+                easyBtn.classList.remove('active');
+                hardBtn.classList.add('active');
+            }
+             resetBall(); // Reset ball speed based on new difficulty setting
+
+            if (!gameRunning) {
+                 startGame();
+            }
+        }
+
+        function startGame() {
+            playerScore = 0; aiScore = 0;
+            playerScoreDisplay.textContent = playerScore; aiScoreDisplay.textContent = aiScore;
+            messageOverlay.style.display = 'none';
+            pointMessage.style.display = 'none';
+            if (pointMessageTimeout) { clearTimeout(pointMessageTimeout); pointMessageTimeout = null; }
+            trophyDisplay.style.display = 'none';
+            gameRunning = true;
+            resetBall();
+            requestAnimationFrame(update);
+        }
+
+
+        function endGame() {
+            gameRunning = false;
+            messageOverlay.style.display = 'flex';
+            playAgainBtn.style.display = 'block';
+            if (pointMessageTimeout) { clearTimeout(pointMessageTimeout); pointMessageTimeout = null; }
+            pointMessage.style.display = 'none';
+
+            if (playerScore >= WINNING_SCORE) { winLoseMessage.textContent = "You Win!"; trophyDisplay.style.display = 'block'; }
+            else { winLoseMessage.textContent = "AI Wins!"; trophyDisplay.style.display = 'none'; }
+        }
+
+        // --- Event Listeners ---
+        canvas.addEventListener('mousemove', movePlayerPaddle);
+        easyBtn.addEventListener('click', () => setDifficulty('easy'));
+        hardBtn.addEventListener('click', () => setDifficulty('hard'));
+        playAgainBtn.addEventListener('click', startGame);
+
+
+        // --- Initial Draw & State ---
+        drawGame();
+        winLoseMessage.textContent = "Select Difficulty";
+        trophyDisplay.style.display = 'none';
+        playAgainBtn.style.display = 'none';
+        pointMessage.style.display = 'none';
+        messageOverlay.style.display = 'flex';
+
+    </script>
+
+</body>
+</html>
